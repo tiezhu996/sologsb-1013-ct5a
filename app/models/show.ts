@@ -13,6 +13,7 @@ export interface Cue {
   notes: string;
   dependsOn: string[];
   offset: number;
+  scheduled?: boolean;
 }
 
 export interface Scene {
@@ -51,7 +52,7 @@ export interface CueDraft {
   props: string;
   cast: string;
   notes: string;
-  dependsOn: string;
+  dependsOn: string[];
 }
 
 export interface CueIssue {
@@ -72,5 +73,12 @@ export interface VersionDiff {
   after: string;
 }
 
-export const CUE_KINDS: CueKind[] = ['灯光', '音响', '道具', '演员', '舞台', '字幕'];
+export const CUE_KINDS: CueKind[] = [
+  '灯光',
+  '音响',
+  '道具',
+  '演员',
+  '舞台',
+  '字幕',
+];
 export const OWNERS = ['李岚', '周启', '陈默', '赵一帆', '孙禾', '待指定'];

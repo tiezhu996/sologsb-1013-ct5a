@@ -42,7 +42,7 @@
           <button type="button" class="scene-item {{if scene.active "is-active"}}" {{on "click" (fn this.selectScene scene.id)}}>
             <span class="act-name">{{scene.act}}</span>
             <strong>{{scene.name}} · {{scene.title}}</strong>
-            <small>{{scene.startTime}} · {{scene.cues.length}} 条 · {{scene.issueCount}} 项检查</small>
+            <small>{{scene.startTime}} · {{scene.cues.length}} 条 · {{scene.spanLabel}}{{#if scene.blockedCount}} · {{scene.blockedCount}} 条无时间{{/if}} · {{scene.issueCount}} 项检查</small>
           </button>
         {{else}}
           <p class="empty-copy">未找到场次</p>
@@ -82,12 +82,12 @@
             <div class="keyboard-note">拖动排序 · <kbd>Alt</kbd> + <kbd>↑↓</kbd> 调整 · <kbd>N</kbd> 新建</div>
           </div>
           <div class="timeline-labels">
-            <span>时间</span><span>类型 / 提示内容</span><span>时长</span><span>负责人</span>
+            <span>时间</span><span>类型 / 提示内容</span><span>时长</span><span>负责人 / 前置</span>
           </div>
           <div class="cue-list">
             {{#each this.cueRows as |cue|}}
               <article
-                class="cue-row kind-{{cue.kindClass}} {{if cue.selected "is-selected"}}"
+                class="cue-row kind-{{cue.kindClass}} {{if cue.selected "is-selected"}} {{unless cue.scheduled "is-blocked"}}"
                 draggable="true"
                 {{on "dragstart" (fn this.startDrag cue.id)}}
                 {{on "dragover" this.allowDrop}}
@@ -96,14 +96,15 @@
               >
                 <div class="cue-time">
                   <span class="drag-dot">⠿</span>
-                  <strong>{{cue.start}}</strong>
-                  <small>至 {{cue.end}}</small>
+                  <strong>{{cue.startLabel}}</strong>
+                  <small>至 {{cue.endLabel}}</small>
                 </div>
                 <div class="cue-main">
                   <div class="cue-title-line">
                     <span class="cue-index">{{cue.index}}</span>
                     <span class="cue-kind">{{cue.kind}}</span>
                     <h3>{{cue.title}}</h3>
+                    {{#unless cue.scheduled}}<span class="block-flag">无时间</span>{{/unless}}
                     {{#if cue.hasIssue}}<span class="issue-flag">检查</span>{{/if}}
                   </div>
                   <p>
@@ -116,7 +117,10 @@
                 <div class="cue-duration">{{cue.duration}}<small>秒</small></div>
                 <div class="cue-owner">
                   <strong>{{if cue.owner cue.owner "待指定"}}</strong>
-                  <small>{{if cue.dependsOn.length (concat cue.dependsOn.length " 个前置") "无前置依赖"}}</small>
+                  <small class="{{if cue.scheduled "prereq-ok" "prereq-block"}}">{{cue.stateLabel}} · {{cue.dependsOn.length}} 个前置</small>
+                  {{#if cue.prereqLabels.length}}
+                    <small class="prereq-names">等：{{join "、" cue.prereqLabels}}</small>
+                  {{/if}}
                 </div>
               </article>
             {{else}}
@@ -148,7 +152,19 @@
             <PaperInput @label="音响提示" @textarea={{true}} @passThru={{hash rows=2}} @value={{this.draft.sound}} @onChange={{fn this.updateDraft "sound"}} />
             <PaperInput @label="道具（顿号分隔）" @value={{this.draft.props}} @onChange={{fn this.updateDraft "props"}} />
             <PaperInput @label="演员（顿号分隔）" @value={{this.draft.cast}} @onChange={{fn this.updateDraft "cast"}} />
-            <PaperInput @label="前置提示 ID" @value={{this.draft.dependsOn}} @onChange={{fn this.updateDraft "dependsOn"}} />
+            <fieldset class="dependency-picker">
+              <legend>前置提示（多选，同场 / 跨场均可）· 已选 {{this.draft.dependsOn.length}} 条</legend>
+              <div class="dependency-options">
+                {{#each this.dependencyOptions as |option|}}
+                  <label class="dependency-option {{if option.checked "is-checked"}}">
+                    <input type="checkbox" checked={{option.checked}} {{on "change" (fn this.toggleDraftDependency option.id)}} />
+                    <span>{{option.label}}</span>
+                  </label>
+                {{else}}
+                  <p class="empty-copy">暂无可挂接的提示。</p>
+                {{/each}}
+              </div>
+            </fieldset>
             <PaperInput @label="备注" @textarea={{true}} @passThru={{hash rows=3}} @value={{this.draft.notes}} @onChange={{fn this.updateDraft "notes"}} />
             <div class="form-actions">
               {{#if this.draft.id}}<PaperButton @warn={{true}} @onClick={{fn this.removeCue this.draft.id}}>删除</PaperButton>{{/if}}
@@ -162,6 +178,8 @@
             <span class="selected-kind">{{this.selectedCue.kind}}</span>
             <h3>{{this.selectedCue.title}}</h3>
             <dl>
+              <dt>排定时间</dt><dd>{{this.selectedTimingLabel}}</dd>
+              <dt>前置</dt><dd>{{#if this.selectedCue.dependsOn.length}}等 {{this.selectedCue.dependsOn.length}} 条：{{this.selectedPrereqs}}{{else}}无前置，按本场顺序排{{/if}}</dd>
               <dt>负责人</dt><dd>{{if this.selectedCue.owner this.selectedCue.owner "缺失"}}</dd>
               <dt>灯光</dt><dd>{{if this.selectedCue.lighting this.selectedCue.lighting "—"}}</dd>
               <dt>音响</dt><dd>{{if this.selectedCue.sound this.selectedCue.sound "—"}}</dd>

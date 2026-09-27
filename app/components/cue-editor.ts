@@ -1,14 +1,38 @@
 import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
-import type { Cue, CueDraft, CueIssue, CueKind, Scene, ShowData, VersionDiff, VersionSnapshot } from 'stage-cue-editor/models/show';
+import type {
+  Cue,
+  CueDraft,
+  CueIssue,
+  CueKind,
+  Scene,
+  ShowData,
+  VersionDiff,
+  VersionSnapshot,
+} from 'stage-cue-editor/models/show';
 import { CUE_KINDS, OWNERS } from 'stage-cue-editor/models/show';
+import {
+  buildSchedule,
+  findDependencyCycles,
+  recalculateAll,
+  startSeconds,
+} from 'stage-cue-editor/utils/schedule';
+import type { ScheduleResult } from 'stage-cue-editor/utils/schedule';
 
 const STORAGE_KEY = 'sologsb-1013-stage-cue-editor-v1';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+const uid = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
-function cue(id: string, kind: CueKind, title: string, duration: number, owner: string, extra: Partial<Cue> = {}): Cue {
+function cue(
+  id: string,
+  kind: CueKind,
+  title: string,
+  duration: number,
+  owner: string,
+  extra: Partial<Cue> = {},
+): Cue {
   return {
     id,
     kind,
@@ -22,6 +46,7 @@ function cue(id: string, kind: CueKind, title: string, duration: number, owner: 
     notes: '',
     dependsOn: [],
     offset: 0,
+    scheduled: true,
     ...extra,
   };
 }
@@ -36,10 +61,24 @@ function initialShow(): ShowData {
       startTime: '19:30',
       locked: false,
       cues: [
-        cue('cue-light-1', '灯光', '观众席渐暗 · 面光起', 45, '李岚', { lighting: 'FOH 1 号面光 65%，侧光暖白 40%', notes: '开演铃后 10 秒执行' }),
-        cue('cue-actor-1', '演员', '说书人自左台入场', 90, '赵一帆', { cast: ['说书人／周启'], props: ['折扇'], notes: '追光跟随；入场后停留台中' }),
-        cue('cue-sound-1', '音响', '古琴引子淡入', 120, '陈默', { sound: 'Q1 古琴引子，-18dB 淡入 6 秒', dependsOn: ['cue-deleted-old'], notes: '旧版依赖保留用于检查示例' }),
-        cue('cue-prop-1', '道具', '月牙灯升至舞台中线', 75, '孙禾', { props: ['月牙灯'], lighting: '顶排 3 号定点' }),
+        cue('cue-light-1', '灯光', '观众席渐暗 · 面光起', 45, '李岚', {
+          lighting: 'FOH 1 号面光 65%，侧光暖白 40%',
+          notes: '开演铃后 10 秒执行',
+        }),
+        cue('cue-actor-1', '演员', '说书人自左台入场', 90, '赵一帆', {
+          cast: ['说书人／周启'],
+          props: ['折扇'],
+          notes: '追光跟随；入场后停留台中',
+        }),
+        cue('cue-sound-1', '音响', '古琴引子淡入', 120, '陈默', {
+          sound: 'Q1 古琴引子，-18dB 淡入 6 秒',
+          dependsOn: ['cue-deleted-old'],
+          notes: '旧版依赖保留用于检查示例',
+        }),
+        cue('cue-prop-1', '道具', '月牙灯升至舞台中线', 75, '孙禾', {
+          props: ['月牙灯'],
+          lighting: '顶排 3 号定点',
+        }),
       ],
     },
     {
@@ -47,16 +86,27 @@ function initialShow(): ShowData {
       act: '第一幕',
       name: 'S2',
       title: '宫门夜宴',
-      startTime: '19:40',
+      startTime: '19:34',
       locked: false,
       cues: [
-        cue('cue-stage-2', '舞台', '中景屏风换为朱红', 60, '', { notes: '负责人尚未确认' }),
-        cue('cue-actor-2', '演员', '群臣列队入场', 110, '赵一帆', { cast: ['群演 6 人', '侍女 4 人'], props: ['宫灯'] }),
-        cue('cue-light-2', '灯光', '暖金顶光覆盖后区', 80, '李岚', { lighting: '顶光 4、5 号 70%，色温 3200K' }),
+        cue('cue-stage-2', '舞台', '中景屏风换为朱红', 60, '', {
+          dependsOn: ['cue-prop-1'],
+          notes: '等上一场月牙灯升到中线后再换景；负责人尚未确认',
+        }),
+        cue('cue-actor-2', '演员', '群臣列队入场', 110, '赵一帆', {
+          cast: ['群演 6 人', '侍女 4 人'],
+          props: ['宫灯'],
+          dependsOn: ['cue-actor-1'],
+          notes: '说书人未下场，等其提示结束',
+        }),
+        cue('cue-light-2', '灯光', '暖金顶光覆盖后区', 80, '李岚', {
+          lighting: '顶光 4、5 号 70%，色温 3200K',
+          dependsOn: ['cue-sound-1'],
+        }),
       ],
     },
   ];
-  scenes.forEach((scene) => recalculateScene(scene));
+  recalculateAll({ title: '', venue: '', date: '', scenes, updatedAt: '' });
   return {
     title: '《长夜行》首演提示表',
     venue: '实验剧场 A 厅',
@@ -66,12 +116,38 @@ function initialShow(): ShowData {
   };
 }
 
+function normalizeShow(show: ShowData): ShowData {
+  show.scenes.forEach((scene) => {
+    scene.cues.forEach((item) => {
+      // 老数据：前置可能存成顿号字符串，或没有 scheduled 字段，按没有前置兼容处理
+      if (
+        typeof (item as Partial<Cue> & { dependsOn?: unknown }).dependsOn ===
+        'string'
+      ) {
+        item.dependsOn = (item.dependsOn as unknown as string)
+          .split(/[、,，]/)
+          .map((value) => value.trim())
+          .filter(Boolean);
+      }
+      if (!Array.isArray(item.dependsOn)) item.dependsOn = [];
+      item.dependsOn = item.dependsOn.map(String);
+      if (typeof item.offset !== 'number') item.offset = 0;
+    });
+  });
+  recalculateAll(show);
+  return show;
+}
+
 function loadShow(): ShowData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialShow();
-    const parsed = JSON.parse(raw) as { show: ShowData; versions: VersionSnapshot[] };
-    return parsed.show ?? initialShow();
+    const parsed = JSON.parse(raw) as {
+      show?: ShowData;
+      versions?: VersionSnapshot[];
+    };
+    if (!parsed.show) return initialShow();
+    return normalizeShow(parsed.show);
   } catch {
     return initialShow();
   }
@@ -81,34 +157,28 @@ function loadVersions(): VersionSnapshot[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    return (JSON.parse(raw) as { versions: VersionSnapshot[] }).versions ?? [];
+    return (JSON.parse(raw) as { versions?: VersionSnapshot[] }).versions ?? [];
   } catch {
     return [];
   }
 }
 
-function recalculateScene(scene: Scene): void {
-  let elapsed = 0;
-  scene.cues.forEach((item) => {
-    item.offset = elapsed;
-    elapsed += Number(item.duration) || 0;
-  });
+function formatClock(total: number): string {
+  const wrapped = ((Math.round(total) % 86400) + 86400) % 86400;
+  const hour = Math.floor(wrapped / 3600);
+  const minute = Math.floor((wrapped % 3600) / 60);
+  const second = wrapped % 60;
+  return [hour, minute, second]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':');
 }
 
-function startSeconds(value: string): number {
-  const [hour = '0', minute = '0'] = value.split(':');
-  return Number(hour) * 3600 + Number(minute) * 60;
-}
-
-function timeLabel(scene: Scene, offset: number): string {
-  const total = startSeconds(scene.startTime) + offset;
-  const hour = Math.floor((total % 86400) / 3600);
-  const minute = Math.floor((total % 3600) / 60);
-  const second = total % 60;
-  return [hour, minute, second].map((part) => String(part).padStart(2, '0')).join(':');
-}
-
-function overlaps(aStart: number, aDuration: number, bStart: number, bDuration: number): boolean {
+function overlaps(
+  aStart: number,
+  aDuration: number,
+  bStart: number,
+  bDuration: number,
+): boolean {
   return aStart < bStart + bDuration && bStart < aStart + aDuration;
 }
 
@@ -125,6 +195,7 @@ export default class CueEditorComponent extends Component {
   private undoStack: ShowData[] = [];
   private redoStack: ShowData[] = [];
   private dragCueId = '';
+  private scheduleCache: ScheduleResult = buildSchedule(this.show);
 
   constructor(owner: unknown, args: Record<string, unknown>) {
     super(owner, args);
@@ -136,31 +207,75 @@ export default class CueEditorComponent extends Component {
   }
 
   get selectedCue(): Cue | undefined {
-    return this.activeScene?.cues.find((item) => item.id === this.selectedCueId);
+    return this.allCues.find((item) => item.cue.id === this.selectedCueId)?.cue;
+  }
+
+  get schedule(): ScheduleResult {
+    return this.scheduleCache;
+  }
+
+  private replaceShow(next: ShowData): void {
+    this.show = next;
+    this.scheduleCache = buildSchedule(next);
   }
 
   get cueRows() {
     if (!this.activeScene) return [];
-    return this.activeScene.cues.map((item, index) => ({
-      ...item,
-      index,
-      start: timeLabel(this.activeScene as Scene, item.offset),
-      end: timeLabel(this.activeScene as Scene, item.offset + item.duration),
-      selected: item.id === this.selectedCueId,
-      hasIssue: this.issues.some((issue) => issue.cueId === item.id),
-      kindClass: item.kind === '灯光' ? 'light' : item.kind === '音响' ? 'sound' : item.kind === '道具' ? 'prop' : item.kind === '演员' ? 'cast' : item.kind === '字幕' ? 'caption' : 'stage',
-      propsLabel: item.props.join('、'),
-      castLabel: item.cast.join('、'),
-    }));
+    return this.activeScene.cues.map((item, index) => {
+      const timing = this.schedule.timings.get(item.id);
+      const scheduled = timing?.start != null;
+      return {
+        ...item,
+        index: index + 1,
+        scheduled,
+        startLabel: scheduled ? formatClock(timing.start as number) : '待前置',
+        endLabel: scheduled ? formatClock(timing.end as number) : '——',
+        stateLabel: scheduled ? '可开始' : '无法开始',
+        prereqLabels: item.dependsOn.map((reference) =>
+          this.cueLabel(reference),
+        ),
+        hasIssue: this.issues.some((issue) => issue.cueId === item.id),
+        kindClass:
+          item.kind === '灯光'
+            ? 'light'
+            : item.kind === '音响'
+              ? 'sound'
+              : item.kind === '道具'
+                ? 'prop'
+                : item.kind === '演员'
+                  ? 'cast'
+                  : item.kind === '字幕'
+                    ? 'caption'
+                    : 'stage',
+        propsLabel: item.props.join('、'),
+        castLabel: item.cast.join('、'),
+        selected: item.id === this.selectedCueId,
+      };
+    });
   }
 
   get sceneRows() {
-    return this.show.scenes.map((scene) => ({
-      ...scene,
-      active: scene.id === this.activeSceneId,
-      issueCount: this.issues.filter((issue) => issue.sceneId === scene.id).length,
-      duration: scene.cues.reduce((total, item) => total + item.duration, 0),
-    }));
+    return this.show.scenes.map((scene) => {
+      let span = 0;
+      let blockedCount = 0;
+      scene.cues.forEach((item) => {
+        const timing = this.schedule.timings.get(item.id);
+        if (timing?.end != null)
+          span = Math.max(
+            span,
+            (timing.end as number) - startSeconds(scene.startTime),
+          );
+        else blockedCount += 1;
+      });
+      return {
+        ...scene,
+        active: scene.id === this.activeSceneId,
+        issueCount: this.issues.filter((issue) => issue.sceneId === scene.id)
+          .length,
+        spanLabel: `${Math.floor(span / 60)}分${span % 60}秒`,
+        blockedCount,
+      };
+    });
   }
 
   get cueKindOptions(): CueKind[] {
@@ -172,47 +287,156 @@ export default class CueEditorComponent extends Component {
   }
 
   get allCues(): Array<{ cue: Cue; scene: Scene }> {
-    return this.show.scenes.flatMap((scene) => scene.cues.map((item) => ({ cue: item, scene })));
+    return this.show.scenes.flatMap((scene) =>
+      scene.cues.map((cue) => ({ cue, scene })),
+    );
+  }
+
+  private cueLabel(id: string): string {
+    const entry = this.allCues.find((item) => item.cue.id === id);
+    if (!entry) return id;
+    const order = entry.scene.cues.findIndex((item) => item.id === id) + 1;
+    return `${entry.scene.name}#${order}「${entry.cue.title}」`;
+  }
+
+  get dependencyOptions() {
+    const editingId = this.draft?.id;
+    const selected = new Set(this.draft?.dependsOn ?? []);
+    return this.allCues
+      .filter((entry) => entry.cue.id !== editingId)
+      .map((entry) => {
+        const order = entry.scene.cues.indexOf(entry.cue) + 1;
+        return {
+          id: entry.cue.id,
+          label: `${entry.scene.act} ${entry.scene.name} #${order} · ${entry.cue.title}`,
+          checked: selected.has(entry.cue.id),
+        };
+      });
   }
 
   get issues(): CueIssue[] {
     const issues: CueIssue[] = [];
+    const { timings, unscheduled } = this.schedule;
+    const entries = new Map(this.allCues.map((entry) => [entry.cue.id, entry]));
+
     this.allCues.forEach(({ cue: item, scene }) => {
-      const cueStart = startSeconds(scene.startTime) + item.offset;
       if (!item.owner) {
-        issues.push({ id: `owner-${item.id}`, severity: 'error', title: '负责人空缺', detail: `${scene.act} ${scene.name}「${item.title}」尚未指定负责人。`, sceneId: scene.id, cueId: item.id });
+        issues.push({
+          id: `owner-${item.id}`,
+          severity: 'error',
+          title: '负责人空缺',
+          detail: `${scene.act} ${scene.name}「${item.title}」尚未指定负责人。`,
+          sceneId: scene.id,
+          cueId: item.id,
+        });
       }
       item.dependsOn.forEach((reference) => {
-        if (!this.allCues.some((entry) => entry.cue.id === reference)) {
-          issues.push({ id: `ref-${item.id}-${reference}`, severity: 'error', title: '提示被引用但已删除', detail: `「${item.title}」仍依赖已删除的提示 ${reference}。`, sceneId: scene.id, cueId: item.id });
+        if (!entries.has(reference)) {
+          issues.push({
+            id: `ref-${item.id}-${reference}`,
+            severity: 'error',
+            title: '提示被引用但已删除',
+            detail: `「${item.title}」仍依赖已删除的提示 ${reference}。`,
+            sceneId: scene.id,
+            cueId: item.id,
+          });
         }
       });
-      const previous = scene.cues[scene.cues.indexOf(item) - 1];
-      if (previous && item.offset < previous.offset + previous.duration) {
-        issues.push({ id: `overlap-${item.id}`, severity: 'error', title: '同场时间冲突', detail: `「${item.title}」与上一条提示重叠。`, sceneId: scene.id, cueId: item.id });
-      }
     });
 
-    const allCues = this.allCues;
-    for (let index = 0; index < allCues.length; index += 1) {
-      for (let next = index + 1; next < allCues.length; next += 1) {
-        const left = allCues[index]!;
-        const right = allCues[next]!;
-        if (left.cue.id === right.cue.id || left.scene.id === right.scene.id) continue;
-        const leftStart = startSeconds(left.scene.startTime) + left.cue.offset;
-        const rightStart = startSeconds(right.scene.startTime) + right.cue.offset;
-        if (!overlaps(leftStart, left.cue.duration, rightStart, right.cue.duration)) continue;
-        const sharedProps = left.cue.props.filter((value) => right.cue.props.includes(value));
-        const sharedCast = left.cue.cast.filter((value) => right.cue.cast.includes(value));
+    // 前置绕成环：环上每一条都写明它在等谁
+    const cycles = findDependencyCycles(unscheduled, entries);
+    const inCycle = new Set<string>();
+    cycles.forEach((cycle, cycleIndex) => {
+      cycle.forEach((id, index) => {
+        inCycle.add(id);
+        const nextId = cycle[(index + 1) % cycle.length]!;
+        issues.push({
+          id: `cycle-${cycleIndex}-${id}`,
+          severity: 'error',
+          title: '前置绕成环，无法排出时间',
+          detail: `${this.cueLabel(id)} 在等 ${this.cueLabel(nextId)} 结束；环上 ${cycle.length} 条提示互相等待。`,
+          sceneId: entries.get(id)?.scene.id,
+          cueId: id,
+        });
+      });
+    });
+
+    // 被环（或其他排不出的前置 / 同场上一条）拖在后面、同样拿不到时间的提示
+    unscheduled.forEach((id) => {
+      if (inCycle.has(id)) return;
+      const entry = entries.get(id);
+      if (!entry) return;
+      const orderIndex = entry.scene.cues.indexOf(entry.cue);
+      const previousId =
+        orderIndex > 0 ? entry.scene.cues[orderIndex - 1]!.id : null;
+      const blocker =
+        entry.cue.dependsOn.find((reference) => unscheduled.has(reference)) ??
+        (previousId && unscheduled.has(previousId) ? previousId : null);
+      issues.push({
+        id: `blocked-${id}`,
+        severity: 'error',
+        title: '前置未排出时间',
+        detail: blocker
+          ? `${this.cueLabel(id)} 在等 ${this.cueLabel(blocker)}，前置落定后才能开始。`
+          : `${this.cueLabel(id)} 的前置链上存在成环依赖。`,
+        sceneId: entry.scene.id,
+        cueId: id,
+      });
+    });
+
+    // 跨场道具 / 演员撞场：只比较已排出时间的提示
+    const scheduledEntries = this.allCues.filter(
+      (entry) => timings.get(entry.cue.id)?.start != null,
+    );
+    for (let index = 0; index < scheduledEntries.length; index += 1) {
+      for (let next = index + 1; next < scheduledEntries.length; next += 1) {
+        const left = scheduledEntries[index]!;
+        const right = scheduledEntries[next]!;
+        if (left.scene.id === right.scene.id) continue;
+        const leftTiming = timings.get(left.cue.id)!;
+        const rightTiming = timings.get(right.cue.id)!;
+        if (
+          !overlaps(
+            leftTiming.start as number,
+            left.cue.duration,
+            rightTiming.start as number,
+            right.cue.duration,
+          )
+        )
+          continue;
+        const sharedProps = left.cue.props.filter((value) =>
+          right.cue.props.includes(value),
+        );
+        const sharedCast = left.cue.cast.filter((value) =>
+          right.cue.cast.includes(value),
+        );
         if (sharedProps.length) {
-          issues.push({ id: `prop-${left.cue.id}-${right.cue.id}`, severity: 'warning', title: '道具撞场', detail: `「${left.cue.title}」与「${right.cue.title}」同时使用：${sharedProps.join('、')}。`, sceneId: right.scene.id, cueId: right.cue.id });
+          issues.push({
+            id: `prop-${left.cue.id}-${right.cue.id}`,
+            severity: 'warning',
+            title: '道具撞场',
+            detail: `「${left.cue.title}」与「${right.cue.title}」同时使用：${sharedProps.join('、')}。`,
+            sceneId: right.scene.id,
+            cueId: right.cue.id,
+          });
         }
         if (sharedCast.length) {
-          issues.push({ id: `cast-${left.cue.id}-${right.cue.id}`, severity: 'warning', title: '演员撞场', detail: `「${left.cue.title}」与「${right.cue.title}」同时需要：${sharedCast.join('、')}。`, sceneId: right.scene.id, cueId: right.cue.id });
+          issues.push({
+            id: `cast-${left.cue.id}-${right.cue.id}`,
+            severity: 'warning',
+            title: '演员撞场',
+            detail: `「${left.cue.title}」与「${right.cue.title}」同时需要：${sharedCast.join('、')}。`,
+            sceneId: right.scene.id,
+            cueId: right.cue.id,
+          });
         }
       }
     }
-    return issues.map((issue) => ({ ...issue, icon: issue.severity === 'error' ? '!' : 'i' }));
+    return issues.map((issue) => ({
+      ...issue,
+      icon: issue.severity === 'error' ? '!' : 'i',
+    }));
   }
 
   get selectedProps(): string {
@@ -223,31 +447,65 @@ export default class CueEditorComponent extends Component {
     return this.selectedCue?.cast.join('、') ?? '';
   }
 
+  get selectedPrereqs(): string {
+    return (
+      this.selectedCue?.dependsOn.map((id) => this.cueLabel(id)).join('、') ??
+      ''
+    );
+  }
+
+  get selectedTimingLabel(): string {
+    if (!this.selectedCue) return '——';
+    const timing = this.schedule.timings.get(this.selectedCue.id);
+    return timing?.start != null
+      ? `${formatClock(timing.start)} 起 · ${formatClock(timing.end as number)} 止`
+      : '前置成环或未就绪，暂无时间';
+  }
+
   get errors(): number {
     return this.issues.filter((issue) => issue.severity === 'error').length;
   }
 
   get compareVersion(): VersionSnapshot | undefined {
-    return this.versions.find((version) => version.id === this.compareVersionId);
+    return this.versions.find(
+      (version) => version.id === this.compareVersionId,
+    );
   }
 
   get versionDiff(): VersionDiff[] {
     const version = this.compareVersion;
     if (!version) return [];
-    const before = version.data.scenes.flatMap((scene) => scene.cues.map((item) => `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`));
-    const after = this.show.scenes.flatMap((scene) => scene.cues.map((item) => `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`));
-    return Array.from({ length: Math.max(before.length, after.length) }, (_, index) => ({
-      id: `diff-${index}`,
-      changed: before[index] !== after[index],
-      label: `提示 ${index + 1}`,
-      before: before[index] ?? '—',
-      after: after[index] ?? '—',
-    }));
+    const before = version.data.scenes.flatMap((scene) =>
+      scene.cues.map(
+        (item) =>
+          `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`,
+      ),
+    );
+    const after = this.show.scenes.flatMap((scene) =>
+      scene.cues.map(
+        (item) =>
+          `${scene.act}/${scene.name} · ${item.title} | ${item.owner || '未指定'} | ${item.duration}s`,
+      ),
+    );
+    return Array.from(
+      { length: Math.max(before.length, after.length) },
+      (_, index) => ({
+        id: `diff-${index}`,
+        changed: before[index] !== after[index],
+        label: `提示 ${index + 1}`,
+        before: before[index] ?? '—',
+        after: after[index] ?? '—',
+      }),
+    );
   }
 
   get filteredScenes() {
     const term = this.search.trim().toLowerCase();
-    return this.sceneRows.filter((scene) => !term || `${scene.act}${scene.name}${scene.title}`.toLowerCase().includes(term));
+    return this.sceneRows.filter(
+      (scene) =>
+        !term ||
+        `${scene.act}${scene.name}${scene.title}`.toLowerCase().includes(term),
+    );
   }
 
   @action
@@ -259,6 +517,10 @@ export default class CueEditorComponent extends Component {
 
   @action
   selectCue(id: string): void {
+    const sceneOf = this.show.scenes.find((scene) =>
+      scene.cues.some((item) => item.id === id),
+    );
+    if (sceneOf) this.activeSceneId = sceneOf.id;
     this.selectedCueId = id;
     this.draft = null;
   }
@@ -276,7 +538,18 @@ export default class CueEditorComponent extends Component {
       this.notify('该场次已锁定，请先建立修订');
       return;
     }
-    this.draft = { kind, title: '', duration: 60, owner: '', lighting: '', sound: '', props: '', cast: '', notes: '', dependsOn: '' };
+    this.draft = {
+      kind,
+      title: '',
+      duration: 60,
+      owner: '',
+      lighting: '',
+      sound: '',
+      props: '',
+      cast: '',
+      notes: '',
+      dependsOn: [],
+    };
   }
 
   @action
@@ -299,8 +572,19 @@ export default class CueEditorComponent extends Component {
       props: item.props.join('、'),
       cast: item.cast.join('、'),
       notes: item.notes,
-      dependsOn: item.dependsOn.join('、'),
+      dependsOn: [...item.dependsOn],
     };
+  }
+
+  @action
+  toggleDraftDependency(id: string, event: Event): void {
+    if (!this.draft) return;
+    const checked = (event.target as HTMLInputElement).checked;
+    const current = this.draft.dependsOn;
+    const dependsOn = checked
+      ? [...current, id]
+      : current.filter((value) => value !== id);
+    this.draft = { ...this.draft, dependsOn };
   }
 
   @action
@@ -323,16 +607,23 @@ export default class CueEditorComponent extends Component {
         owner: draft.owner,
         lighting: draft.lighting,
         sound: draft.sound,
-        props: draft.props.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
-        cast: draft.cast.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+        props: draft.props
+          .split(/[、,，]/)
+          .map((value) => value.trim())
+          .filter(Boolean),
+        cast: draft.cast
+          .split(/[、,，]/)
+          .map((value) => value.trim())
+          .filter(Boolean),
         notes: draft.notes,
-        dependsOn: draft.dependsOn.split(/[、,，]/).map((value) => value.trim()).filter(Boolean),
+        dependsOn: draft.dependsOn,
         offset: 0,
+        scheduled: true,
       };
       const index = scene.cues.findIndex((item) => item.id === saved.id);
       if (index >= 0) scene.cues.splice(index, 1, saved);
       else scene.cues.push(saved);
-      recalculateScene(scene);
+      recalculateAll(show);
       this.selectedCueId = saved.id;
     });
     this.draft = null;
@@ -344,7 +635,7 @@ export default class CueEditorComponent extends Component {
       const scene = show.scenes.find((item) => item.id === this.activeSceneId);
       if (!scene || scene.locked) return;
       scene.cues = scene.cues.filter((item) => item.id !== id);
-      recalculateScene(scene);
+      recalculateAll(show);
     });
     this.selectedCueId = this.activeScene?.cues[0]?.id ?? '';
   }
@@ -367,7 +658,9 @@ export default class CueEditorComponent extends Component {
 
   @action
   copyPreviousScene(): void {
-    const index = this.show.scenes.findIndex((scene) => scene.id === this.activeSceneId);
+    const index = this.show.scenes.findIndex(
+      (scene) => scene.id === this.activeSceneId,
+    );
     const previous = this.show.scenes[index - 1];
     if (!previous) {
       this.notify('当前已是第一场');
@@ -378,19 +671,30 @@ export default class CueEditorComponent extends Component {
     copied.act = this.activeScene?.act ?? copied.act;
     copied.name = `${copied.name}-副本`;
     copied.title = `${copied.title}（复制）`;
-    copied.cues = copied.cues.map((item) => ({ ...item, id: uid('cue'), dependsOn: [] }));
-    recalculateScene(copied);
-    this.mutate((show) => show.scenes.splice(index + 1, 0, copied));
+    copied.cues = copied.cues.map((item) => ({
+      ...item,
+      id: uid('cue'),
+      dependsOn: [],
+      scheduled: true,
+    }));
+    this.mutate((show) => {
+      show.scenes.splice(index + 1, 0, copied);
+      recalculateAll(show);
+    });
     this.activeSceneId = copied.id;
     this.selectedCueId = copied.cues[0]?.id ?? '';
     this.notify('已复制上一场流程');
   }
 
   @action
-  updateSceneField(field: 'title' | 'startTime' | 'act' | 'name', value: string): void {
+  updateSceneField(
+    field: 'title' | 'startTime' | 'act' | 'name',
+    value: string,
+  ): void {
     this.mutate((show) => {
       const scene = show.scenes.find((item) => item.id === this.activeSceneId);
       if (scene && !scene.locked) scene[field] = value;
+      recalculateAll(show);
     });
   }
 
@@ -402,9 +706,13 @@ export default class CueEditorComponent extends Component {
       const item = scene?.cues.find((entry) => entry.id === id);
       if (!scene || !item || scene.locked) return;
       if (field === 'duration') item.duration = Math.max(1, Number(value) || 1);
-      else if (field === 'props' || field === 'cast') item[field] = String(value).split(/[、,，]/).map((entry) => entry.trim()).filter(Boolean);
+      else if (field === 'props' || field === 'cast')
+        item[field] = String(value)
+          .split(/[、,，]/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
       else Object.assign(item, { [field]: value });
-      recalculateScene(scene);
+      recalculateAll(show);
     });
   }
 
@@ -445,7 +753,7 @@ export default class CueEditorComponent extends Component {
       if (from < 0 || to < 0) return;
       const [moved] = scene.cues.splice(from, 1);
       scene.cues.splice(to, 0, moved!);
-      recalculateScene(scene);
+      recalculateAll(show);
     });
     this.selectedCueId = sourceId;
     this.notify('顺序已更新，后续提示时间自动顺延');
@@ -467,7 +775,11 @@ export default class CueEditorComponent extends Component {
 
   @action
   createRevision(): void {
-    this.mutate((show) => show.scenes.forEach((scene) => { scene.locked = false; }));
+    this.mutate((show) =>
+      show.scenes.forEach((scene) => {
+        scene.locked = false;
+      }),
+    );
     this.notify('已从当前锁定版建立可编辑修订');
   }
 
@@ -484,7 +796,7 @@ export default class CueEditorComponent extends Component {
     const previous = this.undoStack.pop();
     if (!previous) return;
     this.redoStack.push(clone(this.show));
-    this.show = previous;
+    this.replaceShow(previous);
     this.ensureSelection();
     this.persist();
   }
@@ -494,7 +806,7 @@ export default class CueEditorComponent extends Component {
     const next = this.redoStack.pop();
     if (!next) return;
     this.undoStack.push(clone(this.show));
-    this.show = next;
+    this.replaceShow(next);
     this.ensureSelection();
     this.persist();
   }
@@ -521,18 +833,23 @@ export default class CueEditorComponent extends Component {
     const next = clone(this.show);
     mutator(next);
     next.updatedAt = new Date().toISOString();
-    this.show = next;
+    this.replaceShow(next);
     this.ensureSelection();
     this.persist();
   }
 
   private ensureSelection(): void {
-    if (!this.show.scenes.some((scene) => scene.id === this.activeSceneId)) this.activeSceneId = this.show.scenes[0]?.id ?? '';
-    if (!this.activeScene?.cues.some((item) => item.id === this.selectedCueId)) this.selectedCueId = this.activeScene?.cues[0]?.id ?? '';
+    if (!this.show.scenes.some((scene) => scene.id === this.activeSceneId))
+      this.activeSceneId = this.show.scenes[0]?.id ?? '';
+    if (!this.activeScene?.cues.some((item) => item.id === this.selectedCueId))
+      this.selectedCueId = this.activeScene?.cues[0]?.id ?? '';
   }
 
   private persist(): void {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ show: this.show, versions: this.versions }));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ show: this.show, versions: this.versions }),
+    );
   }
 
   private notify(value: string): void {
@@ -544,7 +861,10 @@ export default class CueEditorComponent extends Component {
 
   private handleKeyboard = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement | null;
-    const inEditor = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.tagName === 'SELECT';
+    const inEditor =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target?.tagName === 'SELECT';
     const command = event.ctrlKey || event.metaKey;
     if (command && event.key.toLowerCase() === 'z') {
       event.preventDefault();
