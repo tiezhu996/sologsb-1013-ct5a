@@ -470,6 +470,77 @@ kbd {
   font-size: 9px;
 }
 
+.cue-owner small.dep-blocked {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.cue-row.is-blocked {
+  border-style: dashed;
+  background: #fbf7f7;
+}
+
+.cue-row.is-blocked .cue-time strong {
+  color: var(--red);
+}
+
+.cue-time .unscheduled {
+  color: var(--red);
+}
+
+.dep-picker {
+  margin: 12px 0 4px;
+}
+
+.dep-picker-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #5f6d79;
+  font-size: 11px;
+}
+
+.dep-options {
+  max-height: 168px;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.dep-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.dep-option:hover {
+  background: #eef4f8;
+}
+
+.dep-option.is-selected {
+  color: var(--blue);
+  background: #e8f1f7;
+  font-weight: 600;
+}
+
+.dep-option input {
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.dep-empty {
+  margin: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .add-row {
   width: calc(100% - 16px);
   margin: 0 8px 8px;

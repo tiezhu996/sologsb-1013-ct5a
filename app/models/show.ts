@@ -51,7 +51,27 @@ export interface CueDraft {
   props: string;
   cast: string;
   notes: string;
-  dependsOn: string;
+  dependsOn: string[];
+}
+
+export interface ScheduleEntry {
+  cueId: string;
+  sceneId: string;
+  schedulable: boolean;
+  offset: number;
+  start: number;
+  end: number;
+}
+
+export interface DependencyCycle {
+  ids: string[];
+  waits: Array<{ from: string; to: string }>;
+}
+
+export interface ScheduleResult {
+  entries: Map<string, ScheduleEntry>;
+  cycles: DependencyCycle[];
+  blocked: Map<string, string[]>;
 }
 
 export interface CueIssue {
@@ -72,5 +92,12 @@ export interface VersionDiff {
   after: string;
 }
 
-export const CUE_KINDS: CueKind[] = ['灯光', '音响', '道具', '演员', '舞台', '字幕'];
+export const CUE_KINDS: CueKind[] = [
+  '灯光',
+  '音响',
+  '道具',
+  '演员',
+  '舞台',
+  '字幕',
+];
 export const OWNERS = ['李岚', '周启', '陈默', '赵一帆', '孙禾', '待指定'];

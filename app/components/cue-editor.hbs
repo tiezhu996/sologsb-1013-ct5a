@@ -87,7 +87,7 @@
           <div class="cue-list">
             {{#each this.cueRows as |cue|}}
               <article
-                class="cue-row kind-{{cue.kindClass}} {{if cue.selected "is-selected"}}"
+                class="cue-row kind-{{cue.kindClass}} {{if cue.selected "is-selected"}} {{unless cue.schedulable "is-blocked"}}"
                 draggable="true"
                 {{on "dragstart" (fn this.startDrag cue.id)}}
                 {{on "dragover" this.allowDrop}}
@@ -97,7 +97,11 @@
                 <div class="cue-time">
                   <span class="drag-dot">⠿</span>
                   <strong>{{cue.start}}</strong>
-                  <small>至 {{cue.end}}</small>
+                  {{#if cue.end}}
+                    <small>至 {{cue.end}}</small>
+                  {{else}}
+                    <small class="unscheduled">无法排定</small>
+                  {{/if}}
                 </div>
                 <div class="cue-main">
                   <div class="cue-title-line">
@@ -116,7 +120,7 @@
                 <div class="cue-duration">{{cue.duration}}<small>秒</small></div>
                 <div class="cue-owner">
                   <strong>{{if cue.owner cue.owner "待指定"}}</strong>
-                  <small>{{if cue.dependsOn.length (concat cue.dependsOn.length " 个前置") "无前置依赖"}}</small>
+                  <small class={{unless cue.schedulable "dep-blocked"}}>{{cue.depStatus}}</small>
                 </div>
               </article>
             {{else}}
@@ -148,7 +152,19 @@
             <PaperInput @label="音响提示" @textarea={{true}} @passThru={{hash rows=2}} @value={{this.draft.sound}} @onChange={{fn this.updateDraft "sound"}} />
             <PaperInput @label="道具（顿号分隔）" @value={{this.draft.props}} @onChange={{fn this.updateDraft "props"}} />
             <PaperInput @label="演员（顿号分隔）" @value={{this.draft.cast}} @onChange={{fn this.updateDraft "cast"}} />
-            <PaperInput @label="前置提示 ID" @value={{this.draft.dependsOn}} @onChange={{fn this.updateDraft "dependsOn"}} />
+            <div class="dep-picker">
+              <span class="dep-picker-label">前置提示（可多选 · 同场或跨场 · 已选 {{this.draft.dependsOn.length}} 个）</span>
+              <div class="dep-options">
+                {{#each this.dependencyOptions as |option|}}
+                  <label class="dep-option {{if option.selected "is-selected"}}">
+                    <input type="checkbox" checked={{option.selected}} {{on "change" (fn this.toggleDraftDependency option.id)}} />
+                    <span>{{option.label}}</span>
+                  </label>
+                {{else}}
+                  <p class="dep-empty">暂无其他提示可设为前置</p>
+                {{/each}}
+              </div>
+            </div>
             <PaperInput @label="备注" @textarea={{true}} @passThru={{hash rows=3}} @value={{this.draft.notes}} @onChange={{fn this.updateDraft "notes"}} />
             <div class="form-actions">
               {{#if this.draft.id}}<PaperButton @warn={{true}} @onClick={{fn this.removeCue this.draft.id}}>删除</PaperButton>{{/if}}
@@ -167,6 +183,7 @@
               <dt>音响</dt><dd>{{if this.selectedCue.sound this.selectedCue.sound "—"}}</dd>
               <dt>道具</dt><dd>{{if this.selectedCue.props.length this.selectedProps "—"}}</dd>
               <dt>演员</dt><dd>{{if this.selectedCue.cast.length this.selectedCast "—"}}</dd>
+              <dt>前置</dt><dd>{{if this.selectedDepends this.selectedDepends "—"}}</dd>
               <dt>备注</dt><dd>{{if this.selectedCue.notes this.selectedCue.notes "—"}}</dd>
             </dl>
             <div class="inspector-actions">
@@ -187,7 +204,7 @@
         </div>
         <div class="issue-list">
           {{#each this.issues as |issue|}}
-            <button type="button" class="issue-item severity-{{issue.severity}}" {{on "click" (fn this.selectCue issue.cueId)}}>
+            <button type="button" class="issue-item severity-{{issue.severity}}" {{on "click" (fn this.revealIssue issue)}}>
               <span class="issue-icon">{{if issue.icon issue.icon "i"}}</span>
               <span><strong>{{issue.title}}</strong><small>{{issue.detail}}</small></span>
             </button>
